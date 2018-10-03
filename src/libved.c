@@ -419,6 +419,52 @@ uint64_t vedl_get_dma_address(vedl_handle *handle, void *addr, pid_t pid,
 			write, pfnmap);
 }
 
+/** TODO
+ * @brief bulk translate virtual addresses to physical addresses
+ *
+ * @param[in] handle VEDL handle
+ * @param[in] virt pointer to virtual addresses to translate
+ * @param[out] phys pointer to physical addresses
+ * @param[in] naddr number of virtual adresses (pages)
+ * @param pid_t PID to translate
+ * @param pin_down set 1 to pin down the page on the memory
+ * @param write set 1 to check if the page is writable
+ * @param[out] pfnmap function will set 1 if the address is IO mapped address
+ *
+ * @return zero on success
+ *         negative value on failure.
+ *         errno:
+ *           EPERM   The caller is not permitted
+ *           ESRCH   Invalid PID
+ *           ENOMEM  No enough memory or failed to pin down page
+ */
+int vedl_get_addr_pin_blk(vedl_handle *handle, pid_t pid, uint64_t vaddr,
+			  uint64_t *length, uint64_t *paddr, uint32_t maxpages,
+			  uint32_t *npages, int *pgsz, int pin_down, int write)
+{
+	int retval;
+	struct ve_vp_blk ve_arg;
+
+	ve_arg.type = OS_LIST;
+	ve_arg.vp_info.pid = pid;
+	ve_arg.vp_info.write = write;
+	ve_arg.vp_info.vaddr = vaddr;
+	ve_arg.vp_info.length = *length;
+	ve_arg.vp_info.paddr = paddr;
+	ve_arg.vp_info.maxpages = maxpages;
+	if (pin_down)
+		retval = ioctl(handle->vefd, VEDRV_CMD_VHVA_TO_VSAA_BLK_PIN_DOWN,
+				&ve_arg);
+	else
+		retval = ioctl(handle->vefd, VEDRV_CMD_VHVA_TO_VSAA_BLK, &ve_arg);
+	if (retval)
+		return retval;
+	*pgsz = ve_arg.vp_info.pgsz;
+	*length = ve_arg.vp_info.length;
+	*npages = ve_arg.vp_info.npages;
+	return 0;
+}
+
 /**
  * @brief return physical address of process virtual address for MMM, T&D
  *
@@ -819,6 +865,30 @@ int vedl_release_pindown_page_all(vedl_handle *handle)
 int vedl_release_pindown_page_all2(vedl_handle *handle)
 {
 	return do_release_pindown_page_all(handle, TD_LIST);
+}
+
+/**
+ * @brief Bulk release (count down) pinned down pages
+ *
+ * @param[in] handle VEDL handler
+ * @param addr pointer to list of physical (page) addresses
+ * @param npages number of pages in list
+ *
+ * @return 0 on success. negative on failure.
+ *         errno:
+ *           EINVAL Invalid address.
+ *           ESRCH  The page is not pinned
+ */
+int vedl_release_pindown_page_blk(vedl_handle *handle, uint64_t *addr,
+				  int npages)
+{
+	struct ve_vp_blk_release arg;
+
+	arg.type = OS_LIST;
+	arg.addr = addr;
+	arg.npages = npages;
+
+	return ioctl(handle->vefd, VEDRV_CMD_RELEASE_PD_PAGE_BLK, &arg);
 }
 
 /**
